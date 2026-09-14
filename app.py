@@ -17,7 +17,7 @@ st.set_page_config(
     page_title="Intern Skill Gap Analyzer",
     page_icon="🎯",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # =========================================================
@@ -32,10 +32,7 @@ st.markdown("""
 [data-testid="stHeader"] {
     background: transparent;
 }
-[data-testid="stSidebar"] {
-    background: #03120c;
-    border-right: 1px solid #14532d;
-}
+[data-testid="stSidebar"] { display: none; }
 h1, h2, h3 {
     color: #86efac !important;
 }
@@ -321,30 +318,9 @@ st.markdown("""
 
 
 # =========================================================
-# SIDEBAR
-# NO GROQ API / NO GROQ SECTION
+# APP SETTINGS
 # =========================================================
-with st.sidebar:
-    st.header("⚙️ Project Settings")
-
-    number_of_clusters = st.slider(
-        "Number of Job Clusters",
-        min_value=2,
-        max_value=8,
-        value=4,
-    )
-
-    st.markdown("---")
-
-    st.markdown(
-        "**ML Pipeline**  \n"
-        "Resume → NLP → TF-IDF → Similarity → Skill Gaps  \n"
-        "Industry Jobs → TF-IDF → K-Means → Job Clusters"
-    )
-
-    st.markdown("---")
-    st.caption("AI Skill Gap Analysis")
-    st.caption("NLP + TF-IDF + K-Means")
+number_of_clusters = 4
 
 
 # =========================================================
@@ -375,9 +351,10 @@ with tab1:
 
     with col1:
         st.markdown("### 👨‍💻 Intern Resume")
+        st.markdown("Upload your intern resume PDF.")
 
         intern_file = st.file_uploader(
-            "Upload Intern Resume PDF",
+            "Choose PDF file",
             type=["pdf"],
             key="intern_resume",
         )
@@ -392,13 +369,10 @@ with tab1:
 
     with col2:
         st.markdown("### 💼 Industry Jobs")
-
-        st.markdown(
-            "Built-in industry job dataset is active by default."
-        )
+        st.markdown("Upload job description PDF(s) — optional.")
 
         job_files = st.file_uploader(
-            "Upload Job Description PDF(s) — Optional",
+            "Choose PDF file(s)",
             type=["pdf"],
             accept_multiple_files=True,
             key="job_description_pdfs",
