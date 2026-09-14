@@ -8,6 +8,12 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
 from sklearn.metrics.pairwise import cosine_similarity
 
+try:
+    from pypdf import PdfReader
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
+
 # Optional Groq AI layer
 try:
     from groq import Groq
@@ -141,6 +147,45 @@ def find_column(df, candidates):
             return normalized[candidate.lower()]
     return None
 
+def extract_pdf_text(uploaded_file):
+    if not PDF_AVAILABLE:
+        raise RuntimeError("pypdf is not installed. Add pypdf to requirements.txt.")
+    reader = PdfReader(uploaded_file)
+    pages = []
+    for page in reader.pages:
+        pages.append(page.extract_text() or "")
+    return "\n".join(pages).strip()
+
+def prepare_intern_pdfs(files):
+    rows = []
+    for i, file in enumerate(files, start=1):
+        text = extract_pdf_text(file)
+        if text:
+            name = file.name.rsplit(".", 1)[0]
+            rows.append({
+                "intern_id": f"PDF-{i}",
+                "name": name,
+                "skills": text,
+                "clean_skills": clean_text(text),
+                "source": "PDF"
+            })
+    return pd.DataFrame(rows)
+
+def prepare_job_pdfs(files):
+    rows = []
+    for i, file in enumerate(files, start=1):
+        text = extract_pdf_text(file)
+        if text:
+            title = file.name.rsplit(".", 1)[0]
+            rows.append({
+                "job_id": f"PDF-{i}",
+                "title": title,
+                "description": text,
+                "clean_description": clean_text(text),
+                "source": "PDF"
+            })
+    return pd.DataFrame(rows)
+
 def prepare_interns(df):
     id_col = find_column(df, ["intern_id", "id", "employee_id"])
     name_col = find_column(df, ["name", "intern_name", "student_name"])
@@ -166,6 +211,7 @@ def prepare_interns(df):
     )
     result["skills"] = df[skills_col].fillna("").astype(str)
     result["clean_skills"] = result["skills"].map(clean_text)
+    result["source"] = "CSV"
     return result
 
 def prepare_jobs(df):
@@ -185,6 +231,7 @@ def prepare_jobs(df):
     )
     result["description"] = df[desc_col].fillna("").astype(str)
     result["clean_description"] = result["description"].map(clean_text)
+    result["source"] = "CSV"
     return result
 
 def get_top_terms(vectorizer, matrix, n=20):
@@ -323,57 +370,81 @@ tab1, tab2, tab3 = st.tabs(["📊 Upload Data", "🔎 Analyze Intern", "📈 Job
 with tab1:
     st.subheader("Upload your datasets")
 
+    st.info("You can upload CSV files OR PDF resumes/job descriptions. PDF text is extracted automatically.")
+
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("### 👨‍💻 Intern Skills CSV")
+        st.markdown("### 👨‍💻 Intern Profiles")
         intern_file = st.file_uploader(
-            "Upload intern skills",
-            type=["csv"],
-            key="intern_csv",
+            "Upload intern CSV", type=["csv"], key="intern_csv",
             help="Recommended columns: intern_id, name, skills"
         )
-        st.caption("Example: intern_id,name,skills")
+        intern_pdfs = st.file_uploader(
+            "Or upload intern resume PDF(s)", type=["pdf"],
+            accept_multiple_files=True, key="intern_pdfs"
+        )
+        st.caption("CSV example: intern_id,name,skills")
 
     with col2:
-        st.markdown("### 💼 Industry Jobs CSV")
+        st.markdown("### 💼 Industry Jobs")
         job_file = st.file_uploader(
-            "Upload job descriptions",
-            type=["csv"],
-            key="job_csv",
+            "Upload industry jobs CSV", type=["csv"], key="job_csv",
             help="Recommended columns: job_id, title, description"
         )
-        st.caption("Example: job_id,title,description")
+        job_pdfs = st.file_uploader(
+            "Or upload job-description PDF(s)", type=["pdf"],
+            accept_multiple_files=True, key="job_pdfs"
+        )
+        st.caption("CSV example: job_id,title,description")
 
-    if intern_file and job_file:
+    has_intern = bool(intern_file or intern_pdfs)
+    has_jobs = bool(job_file or job_pdfs)
+
+    if has_intern and has_jobs:
         try:
-            raw_interns = pd.read_csv(intern_file)
-            raw_jobs = pd.read_csv(job_file)
+            intern_frames = []
+            job_frames = []
 
-            interns = prepare_interns(raw_interns)
-            jobs = prepare_jobs(raw_jobs)
+            if intern_file:
+                intern_frames.append(prepare_interns(pd.read_csv(intern_file)))
+            if intern_pdfs:
+                pdf_df = prepare_intern_pdfs(intern_pdfs)
+                if not pdf_df.empty:
+                    intern_frames.append(pdf_df)
 
-            st.session_state["interns"] = interns
-            st.session_state["jobs"] = jobs
+            if job_file:
+                job_frames.append(prepare_jobs(pd.read_csv(job_file)))
+            if job_pdfs:
+                pdf_df = prepare_job_pdfs(job_pdfs)
+                if not pdf_df.empty:
+                    job_frames.append(pdf_df)
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Interns", len(interns))
-            c2.metric("Job Descriptions", len(jobs))
-            c3.metric("Job Clusters", min(n_clusters, len(jobs)))
+            if not intern_frames:
+                st.error("No readable intern data was found in the uploaded PDFs/CSV.")
+            elif not job_frames:
+                st.error("No readable job data was found in the uploaded PDFs/CSV.")
+            else:
+                interns = pd.concat(intern_frames, ignore_index=True)
+                jobs = pd.concat(job_frames, ignore_index=True)
+                st.session_state["interns"] = interns
+                st.session_state["jobs"] = jobs
 
-            st.success("Datasets loaded successfully.")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Intern Profiles", len(interns))
+                c2.metric("Industry Jobs", len(jobs))
+                c3.metric("Possible Clusters", min(n_clusters, len(jobs)))
+                st.success("Data loaded successfully. Go to 'Analyze Intern'.")
 
-            st.markdown("### Intern Data Preview")
-            st.dataframe(interns[["intern_id", "name", "skills"]], use_container_width=True)
-
-            st.markdown("### Job Data Preview")
-            st.dataframe(jobs[["job_id", "title", "description"]], use_container_width=True)
+                st.markdown("### 👨‍💻 Intern Preview")
+                st.dataframe(interns[["intern_id", "name", "source", "skills"]], use_container_width=True)
+                st.markdown("### 💼 Industry Job Preview")
+                st.dataframe(jobs[["job_id", "title", "source", "description"]], use_container_width=True)
 
         except Exception as e:
-            st.error(f"Could not process the CSV files: {e}")
-
+            st.error(f"Could not process the uploaded files: {e}")
     else:
-        st.info("Upload both CSV files to start the analysis.")
+        st.info("Upload at least one intern CSV/PDF and one industry job CSV/PDF.")
 
 with tab2:
     st.subheader("Analyze an intern against an industry role")
@@ -393,7 +464,7 @@ with tab2:
             intern_index = st.selectbox(
                 "Select Intern",
                 range(len(interns)),
-                format_func=lambda i: f"{interns.iloc[i]['name']} — {interns.iloc[i]['intern_id']}"
+                format_func=lambda i: f"{interns.iloc[i]['name']} ({interns.iloc[i]['source']})"
             )
 
             selected_intern = interns.iloc[intern_index]
